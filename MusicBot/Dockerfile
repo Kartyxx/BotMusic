@@ -1,10 +1,10 @@
 FROM node:24-alpine
 
-RUN apk add --no-cache python3 ffmpeg
+RUN apk add --no-cache python3 ffmpeg yt-dlp
 
 WORKDIR /app
 
 COPY . .
-RUN FFMPEG_STATIC=0 npm install
+RUN npm install --ignore-scripts
 
 CMD ["node", "index.js"]
