@@ -62,25 +62,22 @@ class YouTube {
                 }];
             }
 
-            // Use yt-dlp for YouTube search
+            // Single yt-dlp call: search + get stream URL at once
             const searchQuery = `ytsearch${limit}:${query}`;
 
             const results = await youtubedl(searchQuery, this.getYtDlpOptions({
                 dumpSingleJson: true,
-                flatPlaylist: true,
+                format: 'bestaudio/best',
             }));
 
-            if (!results || !results.entries) {
+            if (!results) return [];
 
-                return [];
-            }
+            // ytsearch with format returns a playlist with entries, or a single video
+            const entries = results.entries ? results.entries.slice(0, limit) : [results];
 
             const tracks = [];
-            for (const item of results.entries.slice(0, limit)) {
+            for (const item of entries) {
                 try {
-                    // Debug: log item structure
-
-
                     const unknownTitle = guildId ? await LanguageManager.getTranslation(guildId, 'youtube.unknown_title') : 'Unknown Title';
                     const unknownArtist = guildId ? await LanguageManager.getTranslation(guildId, 'youtube.unknown_artist') : 'Unknown Artist';
 
@@ -95,10 +92,11 @@ class YouTube {
                         id: item.id,
                         views: item.view_count,
                         uploadDate: item.upload_date,
-                        description: item.description,
+                        // Stream URL included — skip getStream() call later
+                        streamInfo: item.url ? { url: item.url, type: item.acodec?.includes('opus') ? 'opus' : 'arbitrary', duration: item.duration, bitrate: item.abr || item.tbr || 0, httpHeaders: item.http_headers || {} } : null,
                     };
 
-                    tracks.push(track);
+                    if (track.url) tracks.push(track);
                 } catch (error) {
                     continue;
                 }
