@@ -39,10 +39,27 @@ class YouTube {
         try {
 
 
-            // If it's already a YouTube URL, get info directly
+            // If it's already a YouTube URL, get stream info directly (single yt-dlp call)
             if (this.isYouTubeURL(query)) {
-                const info = await this.getInfo(query, guildId);
-                return info ? [info] : [];
+                const info = await youtubedl(query, this.getYtDlpOptions({
+                    dumpSingleJson: true,
+                    format: 'bestaudio/best',
+                }));
+                if (!info) return [];
+                const unknownTitle = guildId ? await LanguageManager.getTranslation(guildId, 'youtube.unknown_title') : 'Unknown Title';
+                const unknownArtist = guildId ? await LanguageManager.getTranslation(guildId, 'youtube.unknown_artist') : 'Unknown Artist';
+                return [{
+                    title: info.title || unknownTitle,
+                    artist: info.uploader || info.channel || unknownArtist,
+                    url: info.webpage_url || query,
+                    duration: info.duration || 0,
+                    thumbnail: info.thumbnail,
+                    platform: 'youtube',
+                    type: 'track',
+                    id: info.id,
+                    streamUrl: info.url,
+                    streamInfo: { url: info.url, type: info.acodec?.includes('opus') ? 'opus' : 'arbitrary' },
+                }];
             }
 
             // Use yt-dlp for YouTube search
@@ -80,16 +97,6 @@ class YouTube {
                         uploadDate: item.upload_date,
                         description: item.description,
                     };
-
-                    // If duration is missing from search, try to get it from getInfo
-                    if (!track.duration || track.duration === 0) {
-
-                        const detailedInfo = await this.getInfo(track.url, guildId);
-                        if (detailedInfo && detailedInfo.duration) {
-                            track.duration = detailedInfo.duration;
-
-                        }
-                    }
 
                     tracks.push(track);
                 } catch (error) {

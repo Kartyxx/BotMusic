@@ -768,6 +768,11 @@ class MusicPlayer {
                 this.preloadedStreams.delete(this.currentTrack.url);
             }
 
+            // Reuse streamInfo already fetched during search (avoids extra yt-dlp call)
+            if (!streamInfo && resumeFromMs === 0 && this.currentTrack.streamInfo) {
+                streamInfo = this.currentTrack.streamInfo;
+            }
+
             if (!streamInfo) {
                 // Get stream normally
                 switch (this.currentTrack.platform) {
