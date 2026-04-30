@@ -29,7 +29,7 @@ class YouTube {
         } else {
             // Auth yapılandırılmamışsa iOS client kullan.
             // Bu, VPS/sunucu IP'lerinde YouTube'un bot tespitini cookie veya token gerektirmeden atlar.
-            baseOptions.extractorArgs = 'youtube:player_client=ios';
+            baseOptions.extractorArgs = 'youtube:player_client=web';
         }
 
         return baseOptions;
