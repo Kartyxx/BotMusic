@@ -993,6 +993,7 @@ class MusicPlayer {
             }
             
             // File playback mode (either pre-downloaded or fallback from streaming)
+            console.log(`[TIMING] before file playback section: ${Date.now() - _t0}ms`);
             if (!shouldDownload && downloadedFile) {
                 console.log(`🎵 Playing from cached file: ${path.basename(downloadedFile)} (seek: ${resumeFromMs}ms)`);
                 
@@ -1028,6 +1029,7 @@ class MusicPlayer {
                         bitrate: (streamInfo && streamInfo.bitrate) || 128
                     }
                 });
+                console.log(`[TIMING] after createAudioResource (file): ${Date.now() - _t0}ms`);
             }
 
             // Ensure we have a resource
