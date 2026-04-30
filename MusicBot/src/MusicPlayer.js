@@ -931,19 +931,19 @@ class MusicPlayer {
                             : response.body;
                         console.log(`[TIMING] fetch stream URL: ${Date.now() - _t2}ms`);
                     } catch (fetchError) {
-                        // Wait for download to complete
-                        for (let i = 0; i < 30; i++) {
-                            await new Promise(resolve => setTimeout(resolve, 1000));
+                        // Wait for background download to complete (poll every 100ms, max 60s)
+                        for (let i = 0; i < 600; i++) {
+                            await new Promise(resolve => setTimeout(resolve, 100));
                             if (fsSync.existsSync(filepath)) {
                                 const stats = fsSync.statSync(filepath);
                                 if (stats.size > 0) {
-                                    shouldDownload = false; // Switch to file mode
+                                    shouldDownload = false;
                                     downloadedFile = filepath;
                                     break;
                                 }
                             }
                         }
-                        
+
                         if (!downloadedFile) throw fetchError;
                     }
                 } else {
