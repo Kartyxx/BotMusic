@@ -49,6 +49,11 @@ module.exports = {
             const searchingMsg = await LanguageManager.getTranslation(guild.id, 'commands.play.searching_desc', { query });
             await interaction.editReply({ content: searchingMsg });
 
+            // Start voice connection in parallel with search (saves ~1.5s)
+            if (!player.connection) {
+                player.connect().catch(err => console.error('[early connect] Failed:', err.message));
+            }
+
             // Sadece müzik verilerini al (player'a ekleme yapma)
             const trackData = await this.getTrackData(query, guild.id);
 

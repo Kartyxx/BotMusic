@@ -543,7 +543,7 @@ class MusicPlayer {
         const hash = crypto.createHash('md5')
             .update(track.url)
             .digest('hex');
-        const extension = '.opus';
+        const extension = '.webm';
         const filename = `track_${hash}${extension}`;
         const filepath = path.join(CACHE_DIR, filename);
         
@@ -561,8 +561,8 @@ class MusicPlayer {
             // Check if already downloading - wait for it to complete
             if (this.downloadingFiles.has(filepath)) {
                 // Wait for the file to be downloaded (max 60 seconds)
-                for (let i = 0; i < 60; i++) {
-                    await new Promise(resolve => setTimeout(resolve, 1000));
+                for (let i = 0; i < 600; i++) {
+                    await new Promise(resolve => setTimeout(resolve, 100));
                     
                     if (fsSync.existsSync(filepath)) {
                         const stats = await fs.stat(filepath);
@@ -610,23 +610,14 @@ class MusicPlayer {
             // For YouTube, Spotify (via YouTube), SoundCloud (via YouTube) - use youtube-dl-exec
             if (track.platform === 'youtube' || track.platform === 'spotify' || track.platform === 'soundcloud') {
                 const youtubedl = require('youtube-dl-exec');
-                
-                await youtubedl(downloadUrl, {
+
+                // Download raw audio (no re-encoding — saves 7-8s of libopus transcoding)
+                // FFmpeg in play() decodes the webm/opus container on-the-fly
+                await youtubedl(downloadUrl, YouTube.getYtDlpOptions({
                     output: filepath,
-                    format: 'bestaudio',
-                    noCheckCertificates: true,
-                    noWarnings: true,
-                    preferFreeFormats: true,
-                    addHeader: [
-                        'referer:youtube.com',
-                        'user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                    ],
-                    postprocessorArgs: {
-                        'ffmpeg': ['-c:a', 'libopus', '-b:a', '128k']
-                    },
-                    extractAudio: true,
-                    audioFormat: 'opus'
-                });
+                    format: 'bestaudio/best',
+                    noPlaylist: true,
+                }));
             } else {
                 // For DirectLink - fetch and transcode with FFmpeg
                 const fetch = await ensureFetch();
@@ -738,7 +729,6 @@ class MusicPlayer {
             this.pausedTime = 0;
             this.startTime = null;
 
-            const _t0 = Date.now();
             // Get audio stream - check preloaded first!
             let streamUrl = this.currentTrack.url;
             let streamInfo;
@@ -758,11 +748,9 @@ class MusicPlayer {
 
             if (!streamInfo && resumeFromMs === 0 && this.currentTrack.streamInfo) {
                 streamInfo = this.currentTrack.streamInfo;
-                console.log(`[TIMING] streamInfo from cache: ${Date.now() - _t0}ms`);
             }
 
-            // Fetch stream + connect to voice in parallel
-            const _t1 = Date.now();
+            // Connect to voice in parallel with stream fetch (if needed)
             const connectPromise = !this.connection ? this.connect() : Promise.resolve(true);
 
             if (!streamInfo) {
@@ -773,7 +761,6 @@ class MusicPlayer {
                             YouTube.getStream(streamUrl, this.guild.id, resumeFromSeconds),
                             connectPromise,
                         ]);
-                        console.log(`[TIMING] getStream+connect parallel: ${Date.now() - _t1}ms`);
                         break;
 
                     case 'spotify':
@@ -837,7 +824,6 @@ class MusicPlayer {
             } else {
                 // streamInfo already cached — just wait for voice connection
                 await connectPromise;
-                console.log(`[TIMING] connect (cached stream): ${Date.now() - _t1}ms`);
             }
 
             if (!streamInfo) {
@@ -870,8 +856,11 @@ class MusicPlayer {
             } else {
                 // Check if already pre-downloaded
                 const hash = crypto.createHash('md5').update(this.currentTrack.url).digest('hex');
-                const filepath = path.join(CACHE_DIR, `track_${hash}.opus`);
-                
+                // Check both new (.webm) and legacy (.opus) cache filenames
+                const filepathWebm = path.join(CACHE_DIR, `track_${hash}.webm`);
+                const filepathOpus = path.join(CACHE_DIR, `track_${hash}.opus`);
+                const filepath = fsSync.existsSync(filepathOpus) ? filepathOpus : filepathWebm;
+
                 if (fsSync.existsSync(filepath)) {
                     const stats = fsSync.statSync(filepath);
                     if (stats.size > 0) {
@@ -886,116 +875,75 @@ class MusicPlayer {
                 }
             }
 
-            // If we need to download, start streaming immediately while downloading in background
+            // If we need to download, start download and wait for the file
             if (shouldDownload) {
-                // Start download in background (don't await)
                 const hash = crypto.createHash('md5').update(this.currentTrack.url).digest('hex');
-                const filepath = path.join(CACHE_DIR, `track_${hash}.opus`);
-                
-                // Store track reference for background download (currentTrack might change)
+                const filepathWebm = path.join(CACHE_DIR, `track_${hash}.webm`);
+                const filepathOpus = path.join(CACHE_DIR, `track_${hash}.opus`);
                 const trackToDownload = this.currentTrack;
-                
-                // Download in background
+
                 this.downloadTrack(trackToDownload, streamUrl_final, streamInfo)
                     .then(file => {
-                        // Only update if we're still on the same track
                         if (this.currentTrack && this.currentTrack.url === trackToDownload.url) {
                             this.currentDownloadedFile = file;
                         }
                     })
                     .catch(err => {
-                        if (err && err.message) {
-                            console.error(`⚠️ Background download failed: ${err.message}`);
-                        }
+                        if (err && err.message) console.error(`⚠️ Background download failed: ${err.message}`);
                     });
 
-                // Stream directly for immediate playback
-                const _t2 = Date.now();
-                let audioStream;
-                if (typeof streamInfo === 'object' && streamInfo.stream) {
-                    audioStream = streamInfo.stream;
-                } else if (typeof streamUrl_final === 'string') {
-                    const fetch = await ensureFetch();
-
-                    try {
-                        const response = await fetch(streamUrl_final, {
-                            headers: streamInfo?.httpHeaders || {
-                                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                            }
-                        });
-                        
-                        if (!response.ok) throw new Error(`Failed to fetch stream: ${response.status}`);
-                        
-                        audioStream = typeof response.body?.getReader === 'function' && typeof Readable.fromWeb === 'function'
-                            ? Readable.fromWeb(response.body)
-                            : response.body;
-                        console.log(`[TIMING] fetch stream URL: ${Date.now() - _t2}ms`);
-                    } catch (fetchError) {
-                        // Wait for background download to complete (poll every 100ms, max 60s)
-                        for (let i = 0; i < 600; i++) {
-                            await new Promise(resolve => setTimeout(resolve, 100));
-                            if (fsSync.existsSync(filepath)) {
-                                const stats = fsSync.statSync(filepath);
-                                if (stats.size > 0) {
-                                    shouldDownload = false;
-                                    downloadedFile = filepath;
-                                    break;
-                                }
+                if (this.currentTrack.platform === 'youtube' ||
+                    this.currentTrack.platform === 'spotify' ||
+                    this.currentTrack.platform === 'soundcloud') {
+                    // YouTube CDN URLs return 403 for direct HTTP — wait for yt-dlp download
+                    for (let i = 0; i < 600; i++) {
+                        await new Promise(resolve => setTimeout(resolve, 100));
+                        const fp = fsSync.existsSync(filepathOpus) ? filepathOpus : filepathWebm;
+                        if (fsSync.existsSync(fp)) {
+                            const stats = fsSync.statSync(fp);
+                            if (stats.size > 0) {
+                                shouldDownload = false;
+                                downloadedFile = fp;
+                                this.downloadedFiles.add(fp);
+                                this.currentDownloadedFile = fp;
+                                break;
                             }
                         }
-
-                        if (!downloadedFile) throw fetchError;
                     }
+                    if (!downloadedFile) throw new Error('Download timed out');
                 } else {
-                    audioStream = streamUrl_final;
-                }
+                    // Direct links: fetch and stream through FFmpeg
+                    const fetch = await ensureFetch();
+                    const response = await fetch(streamUrl_final, {
+                        headers: streamInfo?.httpHeaders || {
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                        }
+                    });
+                    if (!response.ok) throw new Error(`Failed to fetch stream: ${response.status}`);
 
-                // If streaming failed and we got a downloaded file, skip to file playback
-                if (!audioStream && downloadedFile) {
-                    shouldDownload = false; // Fall through to file playback
-                } else if (audioStream) {
-                    // Create FFmpeg process for streaming
-                    const seekArgs = resumeFromMs > 0 
-                        ? ['-ss', (resumeFromMs / 1000).toFixed(3)] 
-                        : [];
-                    
+                    const audioStream = typeof response.body?.getReader === 'function' && typeof Readable.fromWeb === 'function'
+                        ? Readable.fromWeb(response.body)
+                        : response.body;
+
+                    const seekArgs = resumeFromMs > 0 ? ['-ss', (resumeFromMs / 1000).toFixed(3)] : [];
                     const ffmpegProcess = new prism.FFmpeg({
                         command: ffmpegPath,
-                        args: [
-                            ...seekArgs,  // Add seek if resuming
-                            '-analyzeduration', '0',
-                            '-loglevel', '0',
-                            '-i', 'pipe:0',
-                            '-f', 's16le',
-                            '-ar', '48000',
-                            '-ac', '2'
-                        ]
+                        args: [...seekArgs, '-analyzeduration', '0', '-loglevel', '0', '-i', 'pipe:0', '-f', 's16le', '-ar', '48000', '-ac', '2']
                     });
-
                     ffmpegProcess.on('error', (err) => {
-                        if (err.message && err.message.includes('Premature close')) return;
-                        console.error('❌ FFmpeg streaming error:', err.message);
+                        if (err.message && !err.message.includes('Premature close')) console.error('❌ FFmpeg streaming error:', err.message);
                     });
-
                     audioStream.pipe(ffmpegProcess);
-
                     this.resource = createAudioResource(ffmpegProcess, {
                         inputType: StreamType.Raw,
                         inlineVolume: true,
-                        metadata: {
-                            title: this.currentTrack.title,
-                            url: this.currentTrack.url,
-                            duration: streamInfo.duration || this.currentTrack.duration,
-                            bitrate: streamInfo.bitrate || 128
-                        }
+                        metadata: { title: this.currentTrack.title, url: this.currentTrack.url, duration: streamInfo.duration || this.currentTrack.duration, bitrate: streamInfo.bitrate || 128 }
                     });
                 }
             }
             
             // File playback mode (either pre-downloaded or fallback from streaming)
-            console.log(`[TIMING] before file playback section: ${Date.now() - _t0}ms`);
             if (!shouldDownload && downloadedFile) {
-                console.log(`🎵 Playing from cached file: ${path.basename(downloadedFile)} (seek: ${resumeFromMs}ms)`);
                 
                 const seekArgs = resumeFromMs > 0 
                     ? ['-ss', (resumeFromMs / 1000).toFixed(3)] 
@@ -1029,7 +977,6 @@ class MusicPlayer {
                         bitrate: (streamInfo && streamInfo.bitrate) || 128
                     }
                 });
-                console.log(`[TIMING] after createAudioResource (file): ${Date.now() - _t0}ms`);
             }
 
             // Ensure we have a resource
@@ -1050,7 +997,6 @@ class MusicPlayer {
             console.log(`▶️  Playing: ${this.currentTrack.title} (${this.currentTrack.duration}s, offset: ${resumeFromMs}ms)`);
 
             // Play the resource
-            console.log(`[TIMING] total before audioPlayer.play: ${Date.now() - _t0}ms`);
             this.audioPlayer.play(this.resource);
 
             if (this.pauseReasons.size > 0) {
@@ -1787,10 +1733,12 @@ class MusicPlayer {
     async preloadTrack(track) {
         if (!track || !track.url) return;
 
-        // Check if already downloaded
+        // Check if already downloaded (check both new .webm and legacy .opus)
         const hash = crypto.createHash('md5').update(track.url).digest('hex');
-        const filepath = path.join(CACHE_DIR, `track_${hash}.opus`);
-        
+        const filepathWebm = path.join(CACHE_DIR, `track_${hash}.webm`);
+        const filepathOpus = path.join(CACHE_DIR, `track_${hash}.opus`);
+        const filepath = fsSync.existsSync(filepathOpus) ? filepathOpus : filepathWebm;
+
         if (fsSync.existsSync(filepath)) {
             const stats = fsSync.statSync(filepath);
             if (stats.size > 0) {

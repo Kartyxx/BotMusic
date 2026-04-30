@@ -74,9 +74,6 @@ class MusicEmbedManager {
 
                     // Ses kanalına bağlan ve çalmaya başla
                     try {
-                        if (!player.connection) {
-                            await player.connect();
-                        }
                         await player.play();
 
                         // Yeni embed oluştur
