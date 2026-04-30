@@ -727,14 +727,6 @@ class MusicPlayer {
             }
 
             // Connect to voice channel if not connected
-            if (!this.connection) {
-                const connected = await this.connect();
-                if (!connected) {
-                    const errorMsg = await LanguageManager.getTranslation(this.guild.id, 'musicplayer.failed_connect_voice');
-                    return { success: false, message: errorMsg };
-                }
-            }
-
             // Reset lifecycle flags for new playback
             this.pendingEndReason = null;
             this.skipRequested = false;
@@ -744,40 +736,40 @@ class MusicPlayer {
             this.currentTrackStartOffsetMs = resumeFromMs;
             this.lastPlaybackPosition = resumeFromMs;
             this.pausedTime = 0;
-            this.startTime = null; // Will be set when Playing event fires
+            this.startTime = null;
 
             // Get audio stream - check preloaded first!
             let streamUrl = this.currentTrack.url;
             let streamInfo;
 
-            // Try to reuse cache when resuming
             if (resumeFromMs > 0) {
                 const cached = this.getCachedStreamForCurrentTrack(resumeFromSeconds);
-                if (cached) {
-                    streamInfo = cached;
-                }
+                if (cached) streamInfo = cached;
             }
 
-            // Check if stream is already preloaded (only for fresh playback)
             const preloaded = (!streamInfo && resumeFromMs === 0)
                 ? this.preloadedStreams.get(this.currentTrack.url)
                 : null;
             if (!streamInfo && preloaded) {
                 streamInfo = preloaded.info;
-                // Remove from cache since we're using it
                 this.preloadedStreams.delete(this.currentTrack.url);
             }
 
-            // Reuse streamInfo already fetched during search (avoids extra yt-dlp call)
             if (!streamInfo && resumeFromMs === 0 && this.currentTrack.streamInfo) {
                 streamInfo = this.currentTrack.streamInfo;
             }
 
+            // Fetch stream + connect to voice in parallel
+            const connectPromise = !this.connection ? this.connect() : Promise.resolve(true);
+
             if (!streamInfo) {
-                // Get stream normally
+                // Get stream normally — in parallel with voice connection
                 switch (this.currentTrack.platform) {
                     case 'youtube':
-                        streamInfo = await YouTube.getStream(streamUrl, this.guild.id, resumeFromSeconds);
+                        [streamInfo] = await Promise.all([
+                            YouTube.getStream(streamUrl, this.guild.id, resumeFromSeconds),
+                            connectPromise,
+                        ]);
                         break;
 
                     case 'spotify':
@@ -809,8 +801,11 @@ class MusicPlayer {
                         if (ytTrack && ytTrack.url) {
                             streamUrl = ytTrack.url;
                             this.currentTrack.youtubeUrl = streamUrl;
-                            this.currentTrack.youtubeTitle = ytTrack.title; // Store YouTube title
-                            streamInfo = await YouTube.getStream(streamUrl, this.guild.id, resumeFromSeconds);
+                            this.currentTrack.youtubeTitle = ytTrack.title;
+                            [streamInfo] = await Promise.all([
+                                YouTube.getStream(streamUrl, this.guild.id, resumeFromSeconds),
+                                connectPromise,
+                            ]);
                         } else {
                             const errorMsg = await LanguageManager.getTranslation(this.guild.id, 'musicplayer.youtube_not_found_spotify').replace('{title}', this.currentTrack.title);
                             throw new Error(errorMsg);
@@ -818,17 +813,26 @@ class MusicPlayer {
                         break;
 
                     case 'soundcloud':
-                        streamInfo = await SoundCloud.getStream(streamUrl, this.guild.id, resumeFromSeconds);
+                        [streamInfo] = await Promise.all([
+                            SoundCloud.getStream(streamUrl, this.guild.id, resumeFromSeconds),
+                            connectPromise,
+                        ]);
                         break;
 
                     case 'direct':
-                        streamInfo = await DirectLink.getStream(streamUrl, resumeFromSeconds);
+                        [streamInfo] = await Promise.all([
+                            DirectLink.getStream(streamUrl, resumeFromSeconds),
+                            connectPromise,
+                        ]);
                         break;
 
                     default:
                         const errorMsg = await LanguageManager.getTranslation(this.guild.id, 'musicplayer.unsupported_platform').replace('{platform}', this.currentTrack.platform);
                         throw new Error(errorMsg);
                 }
+            } else {
+                // streamInfo already cached — just wait for voice connection
+                await connectPromise;
             }
 
             if (!streamInfo) {
