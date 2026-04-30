@@ -738,6 +738,7 @@ class MusicPlayer {
             this.pausedTime = 0;
             this.startTime = null;
 
+            const _t0 = Date.now();
             // Get audio stream - check preloaded first!
             let streamUrl = this.currentTrack.url;
             let streamInfo;
@@ -757,9 +758,11 @@ class MusicPlayer {
 
             if (!streamInfo && resumeFromMs === 0 && this.currentTrack.streamInfo) {
                 streamInfo = this.currentTrack.streamInfo;
+                console.log(`[TIMING] streamInfo from cache: ${Date.now() - _t0}ms`);
             }
 
             // Fetch stream + connect to voice in parallel
+            const _t1 = Date.now();
             const connectPromise = !this.connection ? this.connect() : Promise.resolve(true);
 
             if (!streamInfo) {
@@ -770,6 +773,7 @@ class MusicPlayer {
                             YouTube.getStream(streamUrl, this.guild.id, resumeFromSeconds),
                             connectPromise,
                         ]);
+                        console.log(`[TIMING] getStream+connect parallel: ${Date.now() - _t1}ms`);
                         break;
 
                     case 'spotify':
@@ -833,6 +837,7 @@ class MusicPlayer {
             } else {
                 // streamInfo already cached — just wait for voice connection
                 await connectPromise;
+                console.log(`[TIMING] connect (cached stream): ${Date.now() - _t1}ms`);
             }
 
             if (!streamInfo) {
@@ -905,12 +910,13 @@ class MusicPlayer {
                     });
 
                 // Stream directly for immediate playback
+                const _t2 = Date.now();
                 let audioStream;
                 if (typeof streamInfo === 'object' && streamInfo.stream) {
                     audioStream = streamInfo.stream;
                 } else if (typeof streamUrl_final === 'string') {
                     const fetch = await ensureFetch();
-                    
+
                     try {
                         const response = await fetch(streamUrl_final, {
                             headers: streamInfo?.httpHeaders || {
@@ -920,9 +926,10 @@ class MusicPlayer {
                         
                         if (!response.ok) throw new Error(`Failed to fetch stream: ${response.status}`);
                         
-                        audioStream = typeof response.body?.getReader === 'function' && typeof Readable.fromWeb === 'function' 
-                            ? Readable.fromWeb(response.body) 
+                        audioStream = typeof response.body?.getReader === 'function' && typeof Readable.fromWeb === 'function'
+                            ? Readable.fromWeb(response.body)
                             : response.body;
+                        console.log(`[TIMING] fetch stream URL: ${Date.now() - _t2}ms`);
                     } catch (fetchError) {
                         // Wait for download to complete
                         for (let i = 0; i < 30; i++) {
@@ -1041,6 +1048,7 @@ class MusicPlayer {
             console.log(`▶️  Playing: ${this.currentTrack.title} (${this.currentTrack.duration}s, offset: ${resumeFromMs}ms)`);
 
             // Play the resource
+            console.log(`[TIMING] total before audioPlayer.play: ${Date.now() - _t0}ms`);
             this.audioPlayer.play(this.resource);
 
             if (this.pauseReasons.size > 0) {
