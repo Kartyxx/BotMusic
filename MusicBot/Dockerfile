@@ -5,6 +5,6 @@ RUN apk add --no-cache python3 ffmpeg
 WORKDIR /app
 
 COPY . .
-RUN npm install --omit=dev
+RUN FFMPEG_STATIC=0 npm install
 
 CMD ["node", "index.js"]
